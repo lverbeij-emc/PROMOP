@@ -1,0 +1,114 @@
+# =============================================================================
+# OMOP CDM Concept ID to Concept Name Matching
+# =============================================================================
+# Description:
+#   This script matches OMOP CDM concept_ids to their concept names using
+#   vocabulary files downloaded from Athena (https://athena.ohdsi.org).
+#
+# Athena vocabularies used:
+#   - SNOMED, ATC, ICD9CM, ICD10, ICD10PCS, LOINC, LOINC Extension,
+#     UCUM, Visit, and various OMOP type/domain vocabularies
+#
+# Note:
+#   3 concept IDs (35810768, 3185162, 35810535) were not found in Athena
+#   and were manually resolved using the UK Biobank Codings resource:
+#   https://biobank.ndph.ox.ac.uk/showcase/coding.cgi
+#
+# Input files:
+#   - CONCEPT.csv       : First Athena download (core vocabularies)
+#   - CONCEPT_2.csv     : Second Athena download (full LOINC + LOINC Extension)
+#   - OMOP MATCHING R BOOK.xlsx : Excel file with concept_ids to match
+#
+# Output:
+#   - OMOP MATCHING R BOOK - with names.xlsx : Excel file with concept_names added
+#
+# Author: [Your Name]
+# Date:   [Date]
+# =============================================================================
+
+# ── 0. Packages ───────────────────────────────────────────────────────────────
+
+# install.packages(c("readr", "readxl", "dplyr", "writexl"))
+library(readr)
+library(readxl)
+library(dplyr)
+library(writexl)
+
+# ── 1. Set working directory ──────────────────────────────────────────────────
+# Update this path to the folder containing your input files
+
+setwd("YOUR/WORKING/DIRECTORY")
+
+# ── 2. Load Athena vocabulary files ───────────────────────────────────────────
+# Download vocabulary files from https://athena.ohdsi.org
+# Select the following vocabularies before downloading:
+#   SNOMED, ATC, ICD9CM, ICD10, ICD10PCS, LOINC, LOINC Extension, UCUM,
+#   Visit, and OMOP type/domain vocabularies
+#
+# If LOINC concepts are missing, download LOINC and LOINC Extension separately
+# as a second bundle (CONCEPT_2.csv) and the script will combine them.
+
+concept_vocab_1 <- read_tsv(
+  "CONCEPT.csv",
+  col_types = cols(concept_id = col_double(), .default = col_character())
+)
+
+concept_vocab_2 <- read_tsv(
+  "CONCEPT_2.csv",
+  col_types = cols(concept_id = col_double(), .default = col_character())
+)
+
+# Combine and deduplicate
+concept_vocab <- bind_rows(concept_vocab_1, concept_vocab_2) %>%
+  distinct(concept_id, .keep_all = TRUE)
+
+cat("Total concepts loaded:", nrow(concept_vocab), "\n")
+cat("LOINC concepts:", concept_vocab %>% filter(vocabulary_id == "LOINC") %>% nrow(), "\n")
+
+# ── 3. Load your Excel file ───────────────────────────────────────────────────
+
+your_data <- read_excel("OMOP MATCHING R BOOK.xlsx", sheet = 1)
+
+# Rename concept# column to concept_id and convert to numeric
+your_data <- your_data %>%
+  rename(concept_id = `concept#`) %>%
+  mutate(concept_id = as.numeric(concept_id))
+
+# ── 4. Match concept names ────────────────────────────────────────────────────
+
+matched <- your_data %>%
+  left_join(
+    concept_vocab %>% select(concept_id, concept_name),
+    by = "concept_id"
+  )
+
+# Summary
+matched %>%
+  summarise(
+    matched   = sum(!is.na(concept_name)),
+    unmatched = sum(is.na(concept_name)),
+    total     = n()
+  ) %>%
+  print()
+
+# ── 5. Manual additions from UK Biobank ───────────────────────────────────────
+# 3 concept IDs were not found in Athena and were manually looked up at:
+# https://biobank.ndph.ox.ac.uk/showcase/coding.cgi
+
+uk_biobank_additions <- tibble(
+  concept_id   = c(35810768, 3185162, 35810535),
+  concept_name = c(
+    "NAME FOR 35810768",   # <-- fill in
+    "NAME FOR 3185162",    # <-- fill in
+    "NAME FOR 35810535"    # <-- fill in
+  )
+)
+
+matched <- matched %>%
+  rows_patch(uk_biobank_additions, by = "concept_id")
+
+# ── 6. Save output ────────────────────────────────────────────────────────────
+
+write_xlsx(matched, "OMOP MATCHING R BOOK - with names.xlsx")
+
+cat("Done! File saved: OMOP MATCHING R BOOK - with names.xlsx\n")
